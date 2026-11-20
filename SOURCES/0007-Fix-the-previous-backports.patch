@@ -1,0 +1,61 @@
+From a5c9f79516fd4097817ac75a37af3b191a3d1448 Mon Sep 17 00:00:00 2001
+From: Jakub Hrozek <jhrozek@redhat.com>
+Date: Mon, 1 Jun 2020 21:47:28 +0200
+Subject: [PATCH] Fix the previous backports
+
+---
+ src/mod_auth_openidc.c | 24 ++++++++++++------------
+ 1 file changed, 12 insertions(+), 12 deletions(-)
+
+diff --git a/src/mod_auth_openidc.c b/src/mod_auth_openidc.c
+index e16d500..74f206b 100644
+--- a/src/mod_auth_openidc.c
++++ b/src/mod_auth_openidc.c
+@@ -2585,7 +2585,7 @@ static apr_byte_t oidc_validate_post_logout_url(request_rec *r, const char *url,
+                                                apr_uri_unparse(r->pool, &uri, 0), c_host);
+                oidc_error(r, "%s: %s", *err_str, *err_desc);
+                return FALSE;
+-       } else if (strstr(url, "/") != url) {
++       } else if ((uri.hostname == NULL) && (strstr(url, "/") != url)) {
+                *err_str = apr_pstrdup(r->pool, "Malformed URL");
+                *err_desc =
+                                apr_psprintf(r->pool,
+@@ -2593,17 +2593,6 @@ static apr_byte_t oidc_validate_post_logout_url(request_rec *r, const char *url,
+                                                url);
+                oidc_error(r, "%s: %s", *err_str, *err_desc);
+                return FALSE;
+-       }
+-
+-       /* validate the URL to prevent HTTP header splitting */
+-       if (((strstr(url, "\n") != NULL) || strstr(url, "\r") != NULL)) {
+-               *err_str = apr_pstrdup(r->pool, "Invalid Request");
+-               *err_desc =
+-                               apr_psprintf(r->pool,
+-                                               "logout value \"%s\" contains illegal \"\n\" or \"\r\" character(s)",
+-                                               url);
+-               oidc_error(r, "%s: %s", *err_str, *err_desc);
+-               return FALSE;
+         } else if ((uri.hostname == NULL) && (strstr(url, "//") == url)) {
+                 *err_str = apr_pstrdup(r->pool, "Malformed URL");
+                 *err_desc =
+@@ -2622,6 +2611,17 @@ static apr_byte_t oidc_validate_post_logout_url(request_rec *r, const char *url,
+                 return FALSE;
+        }
+ 
++       /* validate the URL to prevent HTTP header splitting */
++       if (((strstr(url, "\n") != NULL) || strstr(url, "\r") != NULL)) {
++               *err_str = apr_pstrdup(r->pool, "Invalid Request");
++               *err_desc =
++                               apr_psprintf(r->pool,
++                                               "logout value \"%s\" contains illegal \"\n\" or \"\r\" character(s)",
++                                               url);
++               oidc_error(r, "%s: %s", *err_str, *err_desc);
++               return FALSE;
++       }
++
+        return TRUE;
+ }
+ 
+-- 
+2.21.3
+

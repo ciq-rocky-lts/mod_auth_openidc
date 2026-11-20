@@ -1,0 +1,86 @@
+From f34a1cfeefc7915fb12f05c74d3a8a60f60388fa Mon Sep 17 00:00:00 2001
+From: Hans Zandbelt <hans.zandbelt@zmartzone.eu>
+Date: Wed, 15 Jan 2020 17:58:53 +0100
+Subject: [PATCH 8/9] add value of OIDC_SET_COOKIE_APPEND env var to Set-Cookie
+ headers
+
+- useful for handling changing/upcoming SameSite behaviors across
+different browsers, e.g.:
+  SetEnvIf User-Agent ".*IOS.*" OIDC_SET_COOKIE_APPEND=SameSite=None
+- bump to 2.4.1rc4
+
+Signed-off-by: Hans Zandbelt <hans.zandbelt@zmartzone.eu>
+(cherry picked from commit a326dbe843a755124ecee883db52dcdc26284c26)
+---
+ ChangeLog  |  5 +++++
+ src/util.c | 27 +++++++++++++++++++++++++++
+ 2 files changed, 32 insertions(+)
+
+diff --git a/ChangeLog b/ChangeLog
+index 6f28a3c..b3ed8f3 100644
+--- a/ChangeLog
++++ b/ChangeLog
+@@ -1,3 +1,8 @@
++01/15/2020
++- add value of OIDC_SET_COOKIE_APPEND env var to Set-Cookie headers
++  useful for handling changing/upcoming SameSite behaviors across different browsers, e.g.:
++    SetEnvIf User-Agent ".*IOS.*" OIDC_SET_COOKIE_APPEND=SameSite=None
++
+ 3/10/2016
+ - release 1.8.8
+ 
+diff --git a/src/util.c b/src/util.c
+index b687cb6..472d0cd 100644
+--- a/src/util.c
++++ b/src/util.c
+@@ -676,6 +676,27 @@ static char *oidc_util_get_cookie_path(request_rec *r) {
+ 	return (rv);
+ }
+ 
++#define OIDC_SET_COOKIE_APPEND_ENV_VAR  "OIDC_SET_COOKIE_APPEND"
++
++const char *oidc_util_set_cookie_append_value(request_rec *r, oidc_cfg *c) {
++	const char *env_var_value = NULL;
++
++	if (r->subprocess_env != NULL)
++		env_var_value = apr_table_get(r->subprocess_env,
++				OIDC_SET_COOKIE_APPEND_ENV_VAR);
++
++	if (env_var_value == NULL) {
++		oidc_debug(r, "no cookie append environment variable %s found",
++				OIDC_SET_COOKIE_APPEND_ENV_VAR);
++		return NULL;
++	}
++
++	oidc_debug(r, "cookie append environment variable %s=%s found",
++			OIDC_SET_COOKIE_APPEND_ENV_VAR, env_var_value);
++
++	return env_var_value;
++}
++
+ /*
+  * set a cookie in the HTTP response headers
+  */
+@@ -685,6 +706,7 @@ void oidc_util_set_cookie(request_rec *r, const char *cookieName,
+ 	oidc_cfg *c = ap_get_module_config(r->server->module_config,
+ 			&auth_openidc_module);
+ 	char *headerString, *currentCookies, *expiresString = NULL;
++	const char *appendString = NULL;
+ 
+ 	/* see if we need to clear the cookie */
+ 	if (apr_strnatcmp(cookieValue, "") == 0)
+@@ -710,6 +732,11 @@ void oidc_util_set_cookie(request_rec *r, const char *cookieName,
+ 					";Secure" : ""),
+ 			c->cookie_http_only != FALSE ? ";HttpOnly" : "");
+ 
++	appendString = oidc_util_set_cookie_append_value(r, c);
++	if (appendString != NULL)
++		headerString = apr_psprintf(r->pool, "%s; %s", headerString,
++				appendString);
++
+ 	/* sanity check on overall cookie value size */
+ 	if (strlen(headerString) > 4093) {
+ 		oidc_warn(r,
+-- 
+2.26.2
+

@@ -1,0 +1,139 @@
+From 8719323667740a50118cff15dfb6f4750524d19f Mon Sep 17 00:00:00 2001
+From: Jakub Hrozek <jhrozek@redhat.com>
+Date: Wed, 26 Aug 2020 12:04:14 +0200
+Subject: [PATCH 9/9] Backport setting an extra cookie parameter
+
+---
+ src/mod_auth_openidc.c | 12 ++++++------
+ src/mod_auth_openidc.h |  2 +-
+ src/session.c          |  6 +++---
+ src/util.c             |  4 +++-
+ 4 files changed, 13 insertions(+), 11 deletions(-)
+
+diff --git a/src/mod_auth_openidc.c b/src/mod_auth_openidc.c
+index 3a11a98..6c86271 100644
+--- a/src/mod_auth_openidc.c
++++ b/src/mod_auth_openidc.c
+@@ -477,7 +477,7 @@ static void oidc_clean_expired_state_cookies(request_rec *r, oidc_cfg *c) {
+ 						apr_time_t now = apr_time_sec(apr_time_now());
+ 						if (now > json_integer_value(v) + c->state_timeout) {
+ 							oidc_error(r, "state has expired");
+-							oidc_util_set_cookie(r, cookieName, "", 0);
++							oidc_util_set_cookie(r, cookieName, "", 0, NULL);
+ 						}
+ 						json_decref(state);
+ 					}
+@@ -509,7 +509,7 @@ static apr_byte_t oidc_restore_proto_state(request_rec *r, oidc_cfg *c,
+ 	}
+ 
+ 	/* clear state cookie because we don't need it anymore */
+-	oidc_util_set_cookie(r, cookieName, "", 0);
++	oidc_util_set_cookie(r, cookieName, "", 0, NULL);
+ 
+ 	*proto_state = oidc_get_state_from_cookie(r, cookieValue);
+ 	if (*proto_state == NULL) return FALSE;
+@@ -576,7 +576,7 @@ static apr_byte_t oidc_authorization_request_set_cookie(request_rec *r,
+ 	const char *cookieName = oidc_get_state_cookie_name(r, state);
+ 
+ 	/* set it as a cookie */
+-	oidc_util_set_cookie(r, cookieName, cookieValue, -1);
++	oidc_util_set_cookie(r, cookieName, cookieValue, -1, NULL);
+ 
+ 	free(s_value);
+ 
+@@ -1644,7 +1644,7 @@ static int oidc_discovery(request_rec *r, oidc_cfg *cfg) {
+ 		oidc_debug(r, "redirecting to external discovery page: %s", url);
+ 
+ 		/* set CSRF cookie */
+-		oidc_util_set_cookie(r, OIDC_CSRF_NAME, csrf, -1);
++		oidc_util_set_cookie(r, OIDC_CSRF_NAME, csrf, -1, NULL);
+ 
+ 		/* do the actual redirect to an external discovery page */
+ 		apr_table_add(r->headers_out, "Location", url);
+@@ -1705,7 +1705,7 @@ static int oidc_discovery(request_rec *r, oidc_cfg *cfg) {
+ 			"%s<p><input type=\"submit\" value=\"Submit\"></p>\n", s);
+ 	s = apr_psprintf(r->pool, "%s</form>\n", s);
+ 
+-	oidc_util_set_cookie(r, OIDC_CSRF_NAME, csrf, -1);
++	oidc_util_set_cookie(r, OIDC_CSRF_NAME, csrf, -1, NULL);
+ 
+ 	/* now send the HTML contents to the user agent */
+ 	return oidc_util_html_send(r, "OpenID Connect Provider Discovery",
+@@ -1935,7 +1935,7 @@ static int oidc_handle_discovery_response(request_rec *r, oidc_cfg *c) {
+ 	if (csrf_cookie) {
+ 
+ 		/* clean CSRF cookie */
+-		oidc_util_set_cookie(r, OIDC_CSRF_NAME, "", 0);
++		oidc_util_set_cookie(r, OIDC_CSRF_NAME, "", 0, NULL);
+ 
+ 		/* compare CSRF cookie value with query parameter value */
+ 		if ((csrf_query == NULL)
+diff --git a/src/mod_auth_openidc.h b/src/mod_auth_openidc.h
+index 6f6bd92..d6c5050 100644
+--- a/src/mod_auth_openidc.h
++++ b/src/mod_auth_openidc.h
+@@ -433,7 +433,7 @@ char *oidc_get_current_url(request_rec *r);
+ char *oidc_url_encode(const request_rec *r, const char *str, const char *charsToEncode);
+ char *oidc_normalize_header_name(const request_rec *r, const char *str);
+ 
+-void oidc_util_set_cookie(request_rec *r, const char *cookieName, const char *cookieValue, apr_time_t expires);
++void oidc_util_set_cookie(request_rec *r, const char *cookieName, const char *cookieValue, apr_time_t expires, const char *ext);
+ char *oidc_util_get_cookie(request_rec *r, const char *cookieName);
+ apr_byte_t oidc_util_http_get(request_rec *r, const char *url, const apr_table_t *params, const char *basic_auth, const char *bearer_token, int ssl_validate_server, const char **response, int timeout, const char *outgoing_proxy, apr_array_header_t *pass_cookies);
+ apr_byte_t oidc_util_http_post_form(request_rec *r, const char *url, const apr_table_t *params, const char *basic_auth, const char *bearer_token, int ssl_validate_server, const char **response, int timeout, const char *outgoing_proxy, apr_array_header_t *pass_cookies);
+diff --git a/src/session.c b/src/session.c
+index 6b5f311..28b43d0 100644
+--- a/src/session.c
++++ b/src/session.c
+@@ -380,7 +380,7 @@ static apr_status_t oidc_session_save_cache(request_rec *r, session_rec *z) {
+ 
+ 		/* set the uuid in the cookie */
+ 		oidc_util_set_cookie(r, d->cookie, key,
+-				c->persistent_session_cookie ? z->expiry : -1);
++				c->persistent_session_cookie ? z->expiry : -1, NULL);
+ 
+ 		/* store the string-encoded session in the cache */
+ 		c->cache->set(r, OIDC_CACHE_SECTION_SESSION, key, z->encoded,
+@@ -389,7 +389,7 @@ static apr_status_t oidc_session_save_cache(request_rec *r, session_rec *z) {
+ 	} else {
+ 
+ 		/* clear the cookie */
+-		oidc_util_set_cookie(r, d->cookie, "", 0);
++		oidc_util_set_cookie(r, d->cookie, "", 0, NULL);
+ 
+ 		/* remove the session from the cache */
+ 		c->cache->set(r, OIDC_CACHE_SECTION_SESSION, key, NULL, 0);
+@@ -430,7 +430,7 @@ static apr_status_t oidc_session_save_cookie(request_rec *r, session_rec *z) {
+ 		}
+ 	}
+ 	oidc_util_set_cookie(r, d->cookie, cookieValue,
+-			c->persistent_session_cookie ? z->expiry : -1);
++			c->persistent_session_cookie ? z->expiry : -1, NULL);
+ 
+ 	return APR_SUCCESS;
+ }
+diff --git a/src/util.c b/src/util.c
+index 472d0cd..6db64ac 100644
+--- a/src/util.c
++++ b/src/util.c
+@@ -701,7 +701,7 @@ const char *oidc_util_set_cookie_append_value(request_rec *r, oidc_cfg *c) {
+  * set a cookie in the HTTP response headers
+  */
+ void oidc_util_set_cookie(request_rec *r, const char *cookieName,
+-		const char *cookieValue, apr_time_t expires) {
++		const char *cookieValue, apr_time_t expires, const char *ext) {
+ 
+ 	oidc_cfg *c = ap_get_module_config(r->server->module_config,
+ 			&auth_openidc_module);
+@@ -736,6 +736,8 @@ void oidc_util_set_cookie(request_rec *r, const char *cookieName,
+ 	if (appendString != NULL)
+ 		headerString = apr_psprintf(r->pool, "%s; %s", headerString,
+ 				appendString);
++	else if (ext != NULL)
++		headerString = apr_psprintf(r->pool, "%s; %s", headerString, ext);
+ 
+ 	/* sanity check on overall cookie value size */
+ 	if (strlen(headerString) > 4093) {
+-- 
+2.26.2
+

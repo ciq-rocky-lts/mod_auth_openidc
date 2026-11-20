@@ -1,0 +1,26 @@
+From b262f0f98915729ed3f9903652e849f6d3fb5afb Mon Sep 17 00:00:00 2001
+From: Jakub Hrozek <jhrozek@redhat.com>
+Date: Wed, 26 Aug 2020 12:42:21 +0200
+Subject: [PATCH 11/11] Backport of fix: also add SameSite=None to by-value
+ session cookies
+
+---
+ src/session.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/session.c b/src/session.c
+index a8c5652..7e7e2ac 100644
+--- a/src/session.c
++++ b/src/session.c
+@@ -430,7 +430,7 @@ static apr_status_t oidc_session_save_cookie(request_rec *r, session_rec *z) {
+ 		}
+ 	}
+ 	oidc_util_set_cookie(r, d->cookie, cookieValue,
+-			c->persistent_session_cookie ? z->expiry : -1, NULL);
++			c->persistent_session_cookie ? z->expiry : -1, OIDC_COOKIE_EXT_SAME_SITE_NONE);
+ 
+ 	return APR_SUCCESS;
+ }
+-- 
+2.26.2
+

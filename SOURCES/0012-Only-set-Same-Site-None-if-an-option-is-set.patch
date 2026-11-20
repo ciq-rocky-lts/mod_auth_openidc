@@ -1,0 +1,174 @@
+From db7d4ffb3bf3b0830da7f0662682cac8da437685 Mon Sep 17 00:00:00 2001
+From: Jakub Hrozek <jhrozek@redhat.com>
+Date: Wed, 26 Aug 2020 14:52:17 +0200
+Subject: [PATCH] Only set Same-Site=None if an option is set
+
+---
+ auth_openidc.conf      |  5 +++++
+ src/config.c           | 11 +++++++++++
+ src/mod_auth_openidc.c |  6 +++---
+ src/mod_auth_openidc.h |  2 ++
+ src/session.c          |  6 ++++--
+ src/util.c             | 12 ++++++++++++
+ 6 files changed, 37 insertions(+), 5 deletions(-)
+
+diff --git a/auth_openidc.conf b/auth_openidc.conf
+index 056b2e4..87ae552 100644
+--- a/auth_openidc.conf
++++ b/auth_openidc.conf
+@@ -514,6 +514,11 @@
+ # When not defined the default is "mod_auth_openidc_session".
+ #OIDCCookie <cookie-name>
+ 
++# Defines whether the SameSite flag will be set to None on the session cookie.
++# When On, the session cookie will have SameSite=None set.
++# When not defined the default is Off.
++#OIDCCookieSameSiteNone [On|Off]
++
+ # (Optional)
+ # Defines whether the HttpOnly flag will be set on cookies.
+ # When not defined the default is On.
+diff --git a/src/config.c b/src/config.c
+index 999d4ee..2cdc5ed 100644
+--- a/src/config.c
++++ b/src/config.c
+@@ -85,6 +85,8 @@
+ #define OIDC_DEFAULT_OAUTH_CLAIM_REMOTE_USER "sub"
+ /* default name of the session cookie */
+ #define OIDC_DEFAULT_COOKIE "mod_auth_openidc_session"
++/* set Same-Site=None flag on session cookie */
++#define OIDC_DEFAULT_COOKIE_SAME_SITE_NONE 0
+ /* default for the HTTP header name in which the remote user name is passed */
+ #define OIDC_DEFAULT_AUTHN_HEADER NULL
+ /* scrub HTTP headers by default unless overridden (and insecure) */
+@@ -1050,6 +1052,7 @@ void *oidc_create_server_config(apr_pool_t *pool, server_rec *svr) {
+ 	c->remote_user_claim.reg_exp = NULL;
+ 	c->pass_idtoken_as = OIDC_PASS_IDTOKEN_AS_CLAIMS;
+ 	c->cookie_http_only = OIDC_DEFAULT_COOKIE_HTTPONLY;
++        c->cookie_same_site_none = OIDC_DEFAULT_COOKIE_SAME_SITE_NONE;
+ 
+ 	c->outgoing_proxy = NULL;
+ 	c->crypto_passphrase = NULL;
+@@ -1373,6 +1376,9 @@ void *oidc_merge_server_config(apr_pool_t *pool, void *BASE, void *ADD) {
+ 	c->cookie_http_only =
+ 			add->cookie_http_only != OIDC_DEFAULT_COOKIE_HTTPONLY ?
+ 					add->cookie_http_only : base->cookie_http_only;
++	c->cookie_same_site_none =
++			add->cookie_same_site_none != OIDC_DEFAULT_COOKIE_SAME_SITE_NONE ?
++					add->cookie_same_site_none : base->cookie_same_site_none;
+ 
+ 	c->outgoing_proxy =
+ 			add->outgoing_proxy != NULL ?
+@@ -2029,6 +2035,11 @@ const command_rec oidc_config_cmds[] = {
+ 				(void *) APR_OFFSETOF(oidc_cfg, cookie_http_only),
+ 				RSRC_CONF,
+ 				"Defines whether or not the cookie httponly flag is set on cookies."),
++		AP_INIT_FLAG("OIDCCookieSameSiteNone",
++				oidc_set_flag_slot,
++				(void *) APR_OFFSETOF(oidc_cfg, cookie_same_site_none),
++				RSRC_CONF,
++				"Defines whether or not the cookie Same-Site flag is set to None on session cookies."),
+ 		AP_INIT_TAKE1("OIDCOutgoingProxy",
+ 				oidc_set_string_slot,
+ 				(void*)APR_OFFSETOF(oidc_cfg, outgoing_proxy),
+diff --git a/src/mod_auth_openidc.c b/src/mod_auth_openidc.c
+index a4429a6..efae0f3 100644
+--- a/src/mod_auth_openidc.c
++++ b/src/mod_auth_openidc.c
+@@ -576,7 +576,7 @@ static apr_byte_t oidc_authorization_request_set_cookie(request_rec *r,
+ 	const char *cookieName = oidc_get_state_cookie_name(r, state);
+ 
+ 	/* set it as a cookie */
+-	oidc_util_set_cookie(r, cookieName, cookieValue, -1, OIDC_COOKIE_EXT_SAME_SITE_NONE);
++	oidc_util_set_cookie(r, cookieName, cookieValue, -1, oidc_util_cookie_ext_value(c));
+ 
+ 	free(s_value);
+ 
+@@ -1644,7 +1644,7 @@ static int oidc_discovery(request_rec *r, oidc_cfg *cfg) {
+ 		oidc_debug(r, "redirecting to external discovery page: %s", url);
+ 
+ 		/* set CSRF cookie */
+-		oidc_util_set_cookie(r, OIDC_CSRF_NAME, csrf, -1, OIDC_COOKIE_EXT_SAME_SITE_NONE);
++		oidc_util_set_cookie(r, OIDC_CSRF_NAME, csrf, -1, oidc_util_cookie_ext_value(cfg));
+ 
+ 		/* do the actual redirect to an external discovery page */
+ 		apr_table_add(r->headers_out, "Location", url);
+@@ -1705,7 +1705,7 @@ static int oidc_discovery(request_rec *r, oidc_cfg *cfg) {
+ 			"%s<p><input type=\"submit\" value=\"Submit\"></p>\n", s);
+ 	s = apr_psprintf(r->pool, "%s</form>\n", s);
+ 
+-	oidc_util_set_cookie(r, OIDC_CSRF_NAME, csrf, -1, OIDC_COOKIE_EXT_SAME_SITE_NONE);
++	oidc_util_set_cookie(r, OIDC_CSRF_NAME, csrf, -1, oidc_util_cookie_ext_value(cfg));
+ 
+ 	/* now send the HTML contents to the user agent */
+ 	return oidc_util_html_send(r, "OpenID Connect Provider Discovery",
+diff --git a/src/mod_auth_openidc.h b/src/mod_auth_openidc.h
+index cbace6a..546185c 100644
+--- a/src/mod_auth_openidc.h
++++ b/src/mod_auth_openidc.h
+@@ -342,6 +342,7 @@ typedef struct oidc_cfg {
+ 	oidc_remote_user_claim_t remote_user_claim;
+ 	int pass_idtoken_as;
+ 	int cookie_http_only;
++	int cookie_same_site_none;
+ 
+ 	char *outgoing_proxy;
+ 
+@@ -437,6 +438,7 @@ char *oidc_normalize_header_name(const request_rec *r, const char *str);
+ 
+ void oidc_util_set_cookie(request_rec *r, const char *cookieName, const char *cookieValue, apr_time_t expires, const char *ext);
+ char *oidc_util_get_cookie(request_rec *r, const char *cookieName);
++const char *oidc_util_cookie_ext_value(oidc_cfg *c);
+ apr_byte_t oidc_util_http_get(request_rec *r, const char *url, const apr_table_t *params, const char *basic_auth, const char *bearer_token, int ssl_validate_server, const char **response, int timeout, const char *outgoing_proxy, apr_array_header_t *pass_cookies);
+ apr_byte_t oidc_util_http_post_form(request_rec *r, const char *url, const apr_table_t *params, const char *basic_auth, const char *bearer_token, int ssl_validate_server, const char **response, int timeout, const char *outgoing_proxy, apr_array_header_t *pass_cookies);
+ apr_byte_t oidc_util_http_post_json(request_rec *r, const char *url, const json_t *data, const char *basic_auth, const char *bearer_token, int ssl_validate_server, const char **response, int timeout, const char *outgoing_proxy, apr_array_header_t *pass_cookies);
+diff --git a/src/session.c b/src/session.c
+index 7e7e2ac..f749f40 100644
+--- a/src/session.c
++++ b/src/session.c
+@@ -380,7 +380,8 @@ static apr_status_t oidc_session_save_cache(request_rec *r, session_rec *z) {
+ 
+ 		/* set the uuid in the cookie */
+ 		oidc_util_set_cookie(r, d->cookie, key,
+-				c->persistent_session_cookie ? z->expiry : -1, OIDC_COOKIE_EXT_SAME_SITE_NONE);
++				c->persistent_session_cookie ? z->expiry : -1,
++                                oidc_util_cookie_ext_value(c));
+ 
+ 		/* store the string-encoded session in the cache */
+ 		c->cache->set(r, OIDC_CACHE_SECTION_SESSION, key, z->encoded,
+@@ -430,7 +431,8 @@ static apr_status_t oidc_session_save_cookie(request_rec *r, session_rec *z) {
+ 		}
+ 	}
+ 	oidc_util_set_cookie(r, d->cookie, cookieValue,
+-			c->persistent_session_cookie ? z->expiry : -1, OIDC_COOKIE_EXT_SAME_SITE_NONE);
++			c->persistent_session_cookie ? z->expiry : -1,
++                        oidc_util_cookie_ext_value(c));
+ 
+ 	return APR_SUCCESS;
+ }
+diff --git a/src/util.c b/src/util.c
+index 6db64ac..963586a 100644
+--- a/src/util.c
++++ b/src/util.c
+@@ -697,6 +697,18 @@ const char *oidc_util_set_cookie_append_value(request_rec *r, oidc_cfg *c) {
+ 	return env_var_value;
+ }
+ 
++const char *oidc_util_cookie_ext_value(oidc_cfg *c) {
++    if (c == NULL) {
++        return NULL;
++    }
++
++    if (c->cookie_same_site_none == 0) {
++        return NULL;
++    }
++
++    return OIDC_COOKIE_EXT_SAME_SITE_NONE;
++}
++
+ /*
+  * set a cookie in the HTTP response headers
+  */
+-- 
+2.26.2
+

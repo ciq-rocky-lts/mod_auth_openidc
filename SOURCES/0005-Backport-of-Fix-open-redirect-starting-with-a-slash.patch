@@ -1,0 +1,31 @@
+From e14beee7d9a3e23a7f5d44413ffd15b89497326f Mon Sep 17 00:00:00 2001
+From: Jakub Hrozek <jhrozek@redhat.com>
+Date: Mon, 16 Mar 2020 21:16:26 +0100
+Subject: [PATCH 5/6] Backport of Fix open redirect starting with a slash
+
+---
+ src/mod_auth_openidc.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/src/mod_auth_openidc.c b/src/mod_auth_openidc.c
+index 431e89e086fbb72f56ea2a212e63c6ac693f62a2..4b1177050ec34976c954b133c6b1499232c3b0ba 100644
+--- a/src/mod_auth_openidc.c
++++ b/src/mod_auth_openidc.c
+@@ -2124,6 +2124,14 @@ static apr_byte_t oidc_validate_post_logout_url(request_rec *r, const char *url,
+                                                url);
+                oidc_error(r, "%s: %s", *err_str, *err_desc);
+                return FALSE;
++        } else if ((uri.hostname == NULL) && (strstr(url, "//") == url)) {
++                *err_str = apr_pstrdup(r->pool, "Malformed URL");
++                *err_desc =
++                                apr_psprintf(r->pool,
++                                                "No hostname was parsed and starting with '//': %s",
++                                                url);
++                oidc_error(r, "%s: %s", *err_str, *err_desc);
++                return FALSE;
+        }
+ 
+        return TRUE;
+-- 
+2.21.1
+
